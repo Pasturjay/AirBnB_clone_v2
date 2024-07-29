@@ -1,29 +1,71 @@
 #!/usr/bin/python3
-import os
 from fabric.api import *
+from os.path import exists
+from datetime import datetime
+from fabric.api import local
 
-env.hosts = ['100.25.19.204', '54.157.159.85']
+env.hosts = ['34.205.65.74', '54.173.1.197']
+
+
+def do_pack():
+    '''
+    Fabric script that generates a .tgz archive from the
+    contents of the web_static
+    '''
+    try:
+        filepath = 'versions/web_static_' + datetime.now().\
+                   strftime('%Y%m%d%H%M%S') + '.tgz'
+        local('mkdir -p versions')
+        local('tar -zcvf versions/web_static_$(date +%Y%m%d%H%M%S).tgz\
+        web_static')
+        print('web_static packed: {} -> {}'.
+              format(filepath, os.path.getsize(filepath)))
+    except:
+        return None
+
+
+def do_deploy(archive_path):
+    """
+    Deploy to your webs server
+    """
+    if exists(archive_path) is False:
+        return False
+    file_name = archive_path.split('/')[1]
+    file_path = '/data/web_static/releases'
+    try:
+        put(archive_path, '/tmp/')
+        run('mkdir -p {}{}'.format(file_path, file_name[:-4]))
+        run('tar -xzf /tmp/{} -C {}{}/'.format(file_name,
+                                               file_path, file_name[:-4]))
+        run('rm /tmp/{}'.format(file_name))
+        run('mv {}{}/web_static/* {}{}/'.format(file_path, file_name[:-4],
+                                                file_path, file_name[:-4]))
+        run('rm -rf {}{}/web_static'.format(file_path, file_name[:-4]))
+        run('rm -rf /data/web_static/current')
+        run('ln -s {}{}/ /data/web_static/current'.format(file_path,
+                                                          file_name[:-4]))
+        return True
+    except:
+        return False
 
 
 def do_clean(number=0):
-    """Delete out-of-date archives.
+    '''
+    Clean extra archive files locally and on servers
+    '''
+    files = local('ls -tr versions', capture=True).split('\n')
+    number_of_files = int(number)
+    if number_of_files == 0:
+        number_of_files = 1
 
-    Args:
-        number (int): The number of archives to keep.
+    local_files = files[:-number_of_files]
+    for file in local_files:
+        local('rm -rf versions/{}'.format(file))
 
-    If number is 0 or 1, keeps only the most recent archive. If
-    number is 2, keeps the most and second-most recent archives,
-    etc.
-    """
-    number = 1 if int(number) == 0 else int(number)
+    with cd('/data/web_static/releases'):
+        files = run('ls -tr').split('\n')
+        files = [f for f in files if f]  # Filter out empty strings
+        remote_files = files[:-number_of_files]
+        for file in remote_files:
+            run('rm -rf /data/web_static/releases/{}'.format(file))
 
-    archives = sorted(os.listdir("versions"))
-    [archives.pop() for i in range(number)]
-    with lcd("versions"):
-        [local("rm ./{}".format(a)) for a in archives]
-
-    with cd("/data/web_static/releases"):
-        archives = run("ls -tr").split()
-        archives = [a for a in archives if "web_static_" in a]
-        [archives.pop() for i in range(number)]
-        [run("rm -rf ./{}".format(a)) for a in archives]
